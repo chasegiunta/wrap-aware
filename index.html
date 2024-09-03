@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+    <link rel="stylesheet" href="/src/style.css" />
+    <title>WrapAware</title>
+    <script type="module">
+      import { codeToHtml } from "https://esm.run/shiki@1.15.1";
+
+      const codeSample = `
+// Use data-has-wrapped to apply classes to a flexbox when children are wrapping
+// data-force-wrap will force the 'is-wrapped' state for all items if any wrap
+<div
+  data-has-wrapped="bg-gradient-to-t from-indigo-500/50"
+  class="flex flex-wrap gap-6"
+>
+  // Use data-is-wrapped to apply classes to the wrapped items
+  <div data-is-wrapped="bg-indigo-500" class="bg-blue-600">01</div>
+  <div data-is-wrapped="bg-indigo-500" class="bg-blue-600">02</div>
+  <div data-is-wrapped="bg-indigo-500" class="bg-blue-600">03</div>
+  ...
+</div>`;
+
+      const firstExample = document.querySelectorAll("[data-code]")[0];
+
+      let codeContent = codeSample;
+      codeContent = codeContent.trim();
+
+      // Wrap the async operation in a function
+      function applyCodeHighlighting() {
+        codeToHtml(codeContent, {
+          lang: "vue-html",
+          theme: "andromeeda",
+          decorations: [
+            {
+              // line and character are 0-indexed
+              start: { line: 0, character: 0 },
+              end: { line: 7, character: 0 },
+              properties: { class: "" },
+            },
+          ],
+        })
+          .then((highlightedCode) => {
+            firstExample.innerHTML = highlightedCode;
+            firstExample.classList.remove("hidden");
+          })
+          .catch((error) => {
+            console.error("Error highlighting code:", error);
+          });
+      }
+
+      // Call the function when the DOM is ready
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", applyCodeHighlighting);
+      } else {
+        applyCodeHighlighting();
+      }
+    </script>
+  </head>
+  <body class="flex flex-col h-screen bg-slate-200">
+    <div id="app" class="container xl:max-w-5xl mx-auto px-4 flex-1">
+      <div class="mt-12 mb-10 lg:mb-6 flex flex-col gap-2">
+        <h1 class="text-5xl font-bold text-slate-700 mb-4">WrapAware</h1>
+        <h2 class="text-xl text-slate-600 text-pretty mb-4">
+          Detect when flexbox children wrap and apply specified classes to both
+          the flexbox and any wrapped flex items.
+          <a
+            href="https://ishadeed.com/article/flex-wrap-detect/"
+            target="_blank"
+            class="text-xl text-blue-600 hover:underline text-nowrap"
+            >Do we need CSS flex-wrap detection?</a
+          >
+        </h2>
+
+        <p class="text-slate-600 text-lg">
+          WrapAware uses a resize observer instead of media queries, and avoids
+          the need for minimum or maximum widths or complex calculations.
+        </p>
+      </div>
+      <div class="flex justify-between">
+        <label
+          class="mb-1 pl-1 text-sm text-slate-600 flex items-center gap-1.5"
+          ><input
+            type="checkbox"
+            class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600"
+          />
+          Toggle
+          <span
+            class="bg-slate-700 text-xs px-1 rounded py-0.5 text-yellow-200 font-mono"
+          >
+            data-force-wrap
+          </span>
+        </label>
+        <div
+          data-resize-info
+          class="text-right mb-1 pr-1 text-sm text-slate-600"
+        >
+          Resize the container to see it in action &#10549;
+        </div>
+      </div>
+      <div data-example class="flex gap-1 w-full">
+        <div
+          data-resizable
+          class="resize-x max-w-full w-screen overflow-auto border border-slate-300 bg-fixed bg-grid-light bg-slate-800 shadow-inner rounded-xl"
+        >
+          <div
+            data-has-wrapped="from-indigo-500/50"
+            class="p-10 flex flex-wrap gap-6 bg-gradient-to-t"
+          >
+            <div
+              data-is-wrapped="bg-pink-500 border-pink-400 shadow-pink-900/80"
+              class="rounded-md px-14 py-4 bg-blue-600 shadow-lg shadow-blue-900/80 border-2 border-blue-500 text-white font-medium font-mono flex-1 text-center"
+            >
+              01
+            </div>
+            <div
+              data-is-wrapped="bg-pink-500 border-pink-400 shadow-pink-900/80"
+              class="rounded-md px-14 py-4 bg-blue-600 shadow-lg shadow-blue-900/80 border-2 border-blue-500 text-white font-medium font-mono flex-1 text-center"
+            >
+              02
+            </div>
+            <div
+              data-is-wrapped="bg-pink-500 border-pink-400 shadow-pink-900/80"
+              class="hidden sm:block rounded-md px-14 py-4 bg-blue-600 shadow-lg shadow-blue-900/80 border-2 border-blue-500 text-white font-medium font-mono flex-1 text-center"
+            >
+              03
+            </div>
+            <div
+              data-is-wrapped="bg-pink-500 border-pink-400 shadow-pink-900/80"
+              class="hidden md:block rounded-md px-14 py-4 bg-blue-600 shadow-lg shadow-blue-900/80 border-2 border-blue-500 text-white font-medium font-mono flex-1 text-center"
+            >
+              04
+            </div>
+            <div
+              data-is-wrapped="bg-pink-500 border-pink-400 shadow-pink-900/80"
+              class="hidden lg:block rounded-md px-14 py-4 bg-blue-600 shadow-lg shadow-blue-900/80 border-2 border-blue-500 text-white font-medium font-mono flex-1 text-center"
+            >
+              05
+            </div>
+          </div>
+        </div>
+        <div
+          id="resize"
+          class="shrink-0 w-4 my-2 group rounded-full relative select-none cursor-col-resize bg-slate-600 border-2 border-slate-700 flex items-center justify-center"
+        >
+          <div
+            class="w-1.5 h-4 border-x border-white opacity-80 group-hover:opacity-100 pointer-events-none"
+          ></div>
+        </div>
+      </div>
+      <div data-code class="overflow-hidden hidden rounded-lg mt-4 mb-20"></div>
+    </div>
+    <script type="module">
+      import { init } from "/src/main.ts";
+      init();
+    </script>
+    <script>
+      let isDragging = false;
+      let startX;
+      let startWidth;
+
+      const resize = document.querySelector("#resize");
+      const resizeInfo = document.querySelector("[data-resize-info]");
+      const resizable = document.querySelector("[data-resizable]");
+      const container = document.querySelector("[data-example]");
+
+      resize.addEventListener("mousedown", function (e) {
+        isDragging = true;
+        resizeInfo.classList.add("transition-opacity", "opacity-0");
+        startX = e.clientX;
+        startWidth = resizable.offsetWidth;
+        document.addEventListener("mousemove", handleMouseMove);
+        document.addEventListener("mouseup", handleMouseUp);
+      });
+
+      function handleMouseMove(e) {
+        if (!isDragging) return;
+        const deltaX = e.clientX - startX;
+        const newWidth = Math.max(
+          200,
+          Math.min(startWidth + deltaX, container.offsetWidth - 10)
+        );
+        resizable.style.width = `${newWidth}px`;
+      }
+
+      function handleMouseUp() {
+        isDragging = false;
+        document.removeEventListener("mousemove", handleMouseMove);
+        document.removeEventListener("mouseup", handleMouseUp);
+      }
+    </script>
+    <script>
+      document.addEventListener("DOMContentLoaded", () => {
+        const checkbox = document.querySelector('input[type="checkbox"]');
+        const flexContainer = document.querySelector("[data-has-wrapped]");
+
+        if (checkbox && flexContainer) {
+          checkbox.addEventListener("change", function () {
+            if (this.checked) {
+              flexContainer.setAttribute("data-force-wrap", "");
+            } else {
+              flexContainer.removeAttribute("data-force-wrap");
+            }
+
+            // Trigger the ResizeObserver by slightly modifying the element's size
+            flexContainer.style.padding = flexContainer.style.padding
+              ? ""
+              : "0.1px";
+            setTimeout(() => {
+              flexContainer.style.padding = "";
+            }, 0);
+          });
+        }
+      });
+    </script>
+  </body>
+</html>
