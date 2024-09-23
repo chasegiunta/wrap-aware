@@ -1,6 +1,6 @@
 {
   "name": "wrap-aware",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "author": "Chase Giunta",
   "repository": {
     "type": "git",
@@ -22,7 +22,8 @@
   "peerDependencies": {},
   "exports": {
     ".": {
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
     }
   },
   "files": [
