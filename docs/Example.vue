@@ -18,7 +18,7 @@
       >
         <div
           ref="flexParent"
-          class="p-10 flex flex-wrap gap-6 bg-gradient-to-t"
+          class="p-10 flex flex-wrap gap-6 bg-linear-to-t"
           :class="parentClasses"
         >
           <div
@@ -44,12 +44,6 @@
             class="rounded-md px-14 py-4 bg-blue-600 shadow-lg shadow-blue-900/80 border-2 border-blue-500 text-white font-medium font-mono flex-1 text-center"
           >
             04
-          </div>
-          <div
-            :class="childClasses"
-            class="rounded-md px-14 py-4 bg-blue-600 shadow-lg shadow-blue-900/80 border-2 border-blue-500 text-white font-medium font-mono flex-1 text-center"
-          >
-            05
           </div>
         </div>
       </div>

@@ -30,8 +30,8 @@
   </div>
 
   <Example
-    parent-classes="has-[[data-is-wrapped]]:from-pink-500/50"
-    child-classes="data-[is-wrapped]:bg-pink-500 data-[is-wrapped]:border-pink-400 data-[is-wrapped]:shadow-pink-900/80"
+    parent-classes="has-data-is-wrapped:from-pink-500/50"
+    child-classes="data-is-wrapped:bg-pink-500 data-is-wrapped:border-pink-400 data-is-wrapped:shadow-pink-900/80"
     :code-sample="exampleOneCodeSample"
     class="mb-20"
   ></Example>
@@ -42,7 +42,7 @@
   </p>
 
   <Example
-    parent-classes="has-[[data-is-wrapped]]:flex-col"
+    parent-classes="has-data-is-wrapped:flex-col"
     child-classes=""
     :code-sample="exampleTwoCodeSample"
     class="mb-10"
@@ -76,12 +76,12 @@ const cleanup = WrapAware('.flex-wrap');
 // data-has-wrapped is applied to a flexbox when children are wrapping
 <div
   data-has-wrapped
-  class="flex flex-wrap data-[has-wrapped]:from-pink-500/50"
+  class="flex flex-wrap data-has-wrapped:from-pink-500/50"
 >
   // data-is-wrapped is applied to the wrapped items
-  <div data-is-wrapped class="data-[is-wrapped]:bg-pink-500 data-[is-wrapped]:border-pink-400 data-[is-wrapped]:shadow-pink-900/80">01</div>
-  <div data-is-wrapped class="data-[is-wrapped]:bg-pink-500 data-[is-wrapped]:border-pink-400 data-[is-wrapped]:shadow-pink-900/80">02</div>
-  <div data-is-wrapped class="data-[is-wrapped]:bg-pink-500 data-[is-wrapped]:border-pink-400 data-[is-wrapped]:shadow-pink-900/80">03</div>
+  <div data-is-wrapped class="data-is-wrapped:bg-pink-500 data-is-wrapped:border-pink-400 data-is-wrapped:shadow-pink-900/80">01</div>
+  <div data-is-wrapped class="data-is-wrapped:bg-pink-500 data-is-wrapped:border-pink-400 data-is-wrapped:shadow-pink-900/80">02</div>
+  <div data-is-wrapped class="data-is-wrapped:bg-pink-500 data-is-wrapped:border-pink-400 data-is-wrapped:shadow-pink-900/80">03</div>
   ...
 </div>`);
 
@@ -90,12 +90,11 @@ const exampleTwoCodeSample =
 // Uses :has selector, eg. 
 <div
   data-has-wrapped
-  class="flex flex-wrap has-[[data-is-wrapped]]:flex-col"
+  class="flex flex-wrap has-data-is-wrapped:flex-col"
 >
   <div>01</div>
   <div>02</div>
   <div>03</div>
-  <div>04</div>
-  <div data-is-wrapped>05</div>
+  <div data-is-wrapped>04</div>
 </div>`);
 </script>
