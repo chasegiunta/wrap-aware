@@ -9,15 +9,15 @@
   "main": "dist/index.js",
   "module": "dist/index.js",
   "devDependencies": {
-    "@tailwindcss/forms": "^0.5.8",
-    "@vitejs/plugin-vue": "^5.1.3",
-    "autoprefixer": "^10.4.20",
-    "postcss": "^8.4.44",
-    "shiki": "^1.16.1",
+    "@tailwindcss/forms": "^0.5.10",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "autoprefixer": "^10.4.21",
+    "postcss": "^8.5.3",
+    "shiki": "^3.1.0",
     "tailwindcss": "^3.4.10",
-    "typescript": "^5.5.3",
-    "vite": "^5.4.1",
-    "vue-tsc": "^2.1.4"
+    "typescript": "^5.8.2",
+    "vite": "^6.2.1",
+    "vue-tsc": "^2.2.8"
   },
   "peerDependencies": {},
   "exports": {
@@ -36,7 +36,8 @@
     "dev": "vite",
     "build": "vite build --mode library",
     "build:docs": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "up": "bunx npm-check-updates -i"
   },
   "type": "module"
 }
