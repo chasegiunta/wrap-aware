@@ -3,24 +3,6 @@ const PARENT_WRAPPING_ATTR = "data-has-wrapped";
 const ITEM_WRAPPED_ATTR = "data-is-wrapped";
 
 /**
- * Converts a data attribute name to camelCase.
- * Removes brackets, 'data-' prefix, and converts to camelCase.
- * @param attr - The attribute name to convert
- * @returns The camelCase version of the attribute name
- */
-const convertToCamelCase = (attr: string): string => {
-  // Remove brackets and 'data-' prefix
-  const cleanAttr = attr.replace(/^\[?data-/, "").replace(/]$/, "");
-
-  // Convert to camelCase
-  return cleanAttr.replace(/-([a-z])/g, (_, char) => char.toUpperCase());
-};
-
-// Convert attribute names to camelCase for use with dataset
-const parentWrappingAttr = convertToCamelCase(PARENT_WRAPPING_ATTR);
-const itemWrappedAttr = convertToCamelCase(ITEM_WRAPPED_ATTR);
-
-/**
  * Gets the rounded top position of an element.
  * Rounding is used to account for sub-pixel discrepancies.
  * @param item - The HTML element to get the top position for
@@ -39,18 +21,38 @@ const markFlexboxAndItemsWrapState = (flexBox: HTMLElement) => {
   requestAnimationFrame(() => {
     const flexItems = flexBox.children;
 
+    // Skip if there are no flex items
+    if (flexItems.length === 0) {
+      return;
+    }
+
+    // Get the computed style to check for flex-wrap: wrap-reverse
+    const computedStyle = window.getComputedStyle(flexBox);
+    const isWrapReverse = computedStyle.flexWrap === "wrap-reverse";
+
     // Temporarily set flex-direction to row for accurate calculations
-    flexBox.setAttribute("style", "flex-direction: row");
+    // but preserve the original flex-wrap setting
+    flexBox.setAttribute(
+      "style",
+      `flex-direction: row; flex-wrap: ${computedStyle.flexWrap};`
+    );
 
     const firstItemTop = getTop(flexItems[0] as HTMLElement);
     const lastItemTop = getTop(flexItems[flexItems.length - 1] as HTMLElement);
 
     // Process each flex item
     for (const flexItem of flexItems as HTMLCollectionOf<HTMLElement>) {
-      // Check if the item has wrapped
-      const isItemWrapped = firstItemTop < getTop(flexItem);
+      // Different comparison based on wrap-reverse vs normal wrap
+      const itemTop = getTop(flexItem);
+      const isItemWrapped = isWrapReverse
+        ? firstItemTop > itemTop // For wrap-reverse, wrapped items are above
+        : firstItemTop < itemTop; // For normal wrap, wrapped items are below
+
       const isSwitchedBoxWrapped =
-        flexBox.dataset.forceWrap !== undefined && firstItemTop < lastItemTop;
+        flexBox.dataset.forceWrap !== undefined &&
+        (isWrapReverse
+          ? firstItemTop > lastItemTop
+          : firstItemTop < lastItemTop);
 
       // Add or remove data attribute based on wrap state
       if (isItemWrapped || isSwitchedBoxWrapped) {
@@ -64,7 +66,13 @@ const markFlexboxAndItemsWrapState = (flexBox: HTMLElement) => {
     flexBox.removeAttribute("style");
 
     // Process the flex container itself
-    if (firstItemTop >= lastItemTop) {
+    // For wrap-reverse, no wrapping means first item is below or at same level as last item
+    // For normal wrap, no wrapping means first item is above or at same level as last item
+    const hasWrapped = isWrapReverse
+      ? firstItemTop <= lastItemTop
+      : firstItemTop >= lastItemTop;
+
+    if (hasWrapped) {
       flexBox.removeAttribute(PARENT_WRAPPING_ATTR);
     } else {
       flexBox.setAttribute(PARENT_WRAPPING_ATTR, "");
