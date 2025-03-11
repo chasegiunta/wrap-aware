@@ -3,6 +3,29 @@ const PARENT_WRAPPING_ATTR = "data-has-wrapped";
 const ITEM_WRAPPED_ATTR = "data-is-wrapped";
 
 /**
+ * Simple debounce implementation to limit the frequency of function calls
+ * @param fn - The function to debounce
+ * @param delay - The delay in milliseconds
+ * @returns A debounced function
+ */
+const debounce = <T extends (...args: any[]) => any>(
+  fn: T,
+  delay: number
+): ((...args: Parameters<T>) => void) => {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+
+  return (...args: Parameters<T>) => {
+    if (timeout !== null) {
+      clearTimeout(timeout);
+    }
+    timeout = setTimeout(() => {
+      fn(...args);
+      timeout = null;
+    }, delay);
+  };
+};
+
+/**
  * Gets the bounding client rect with rounded values.
  * Rounding is used to account for sub-pixel discrepancies.
  * @param item - The HTML element to get positions for
@@ -16,6 +39,46 @@ const getRect = (item: HTMLElement) => {
     left: Math.round(rect.left),
   };
 };
+
+/**
+ * Check if an element already has an attribute with the expected presence state
+ * @param element - The HTML element to check
+ * @param attribute - The attribute name
+ * @param shouldHaveAttribute - Whether the attribute should be present
+ * @returns True if the element's attribute state matches the expected state
+ */
+const attributeStateMatches = (
+  element: HTMLElement,
+  attribute: string,
+  shouldHaveAttribute: boolean
+): boolean => {
+  const hasAttribute = element.hasAttribute(attribute);
+  return shouldHaveAttribute === hasAttribute;
+};
+
+/**
+ * Efficiently set or remove an attribute based on condition
+ * @param element - The HTML element to modify
+ * @param attribute - The attribute name
+ * @param shouldHaveAttribute - Whether the attribute should be present
+ */
+const updateAttributeEfficiently = (
+  element: HTMLElement,
+  attribute: string,
+  shouldHaveAttribute: boolean
+): void => {
+  // Only update the DOM if the current state doesn't match the desired state
+  if (!attributeStateMatches(element, attribute, shouldHaveAttribute)) {
+    if (shouldHaveAttribute) {
+      element.setAttribute(attribute, "");
+    } else {
+      element.removeAttribute(attribute);
+    }
+  }
+};
+
+// Cache to store previous measurements for elements
+const measurementCache = new WeakMap<HTMLElement, string>();
 
 /**
  * Marks the flex container and its items based on their wrap state.
@@ -32,33 +95,58 @@ const markFlexboxAndItemsWrapState = (flexBox: HTMLElement) => {
       return;
     }
 
+    // Check if measurements have already been cached and dimensions haven't changed
+    const dimensionKey = `${flexBox.clientWidth},${flexBox.clientHeight}`;
+    const cachedKey = measurementCache.get(flexBox);
+
+    // If the dimensions haven't changed since last measurement, skip processing
+    if (cachedKey === dimensionKey) {
+      return;
+    }
+
+    // Update the cache with current dimensions
+    measurementCache.set(flexBox, dimensionKey);
+
     // Get the computed style to check for flex-wrap: wrap-reverse
     const computedStyle = window.getComputedStyle(flexBox);
     const isWrapReverse = computedStyle.flexWrap === "wrap-reverse";
-    const isRowDirection = computedStyle.flexDirection.includes("row");
 
     // Store original styles
     const originalStyle = flexBox.getAttribute("style") || "";
+
+    // Create a cache for the current run to avoid multiple getBoundingClientRect calls
+    const rectCache = new Map<HTMLElement, ReturnType<typeof getRect>>();
+
+    const getCachedRect = (element: HTMLElement) => {
+      if (!rectCache.has(element)) {
+        rectCache.set(element, getRect(element));
+      }
+      return rectCache.get(element)!;
+    };
 
     // For standard wrapping (not wrap-reverse), use the original logic which works well
     if (!isWrapReverse) {
       // Temporarily set flex-direction to row for accurate calculations
       flexBox.setAttribute("style", `${originalStyle}; flex-direction: row;`);
 
-      const firstItemTop = getRect(flexItems[0]).top;
-      const lastItemTop = getRect(flexItems[flexItems.length - 1]).top;
+      // Get measurements after style change in a batched way to avoid layout thrashing
+      const firstItemRect = getCachedRect(flexItems[0]);
+      const lastItemRect = getCachedRect(flexItems[flexItems.length - 1]);
+      const firstItemTop = firstItemRect.top;
+      const lastItemTop = lastItemRect.top;
 
       // Process each flex item for standard wrapping
       for (const flexItem of flexItems) {
-        const isItemWrapped = firstItemTop < getRect(flexItem).top;
+        const itemRect = getCachedRect(flexItem);
+        const isItemWrapped = firstItemTop < itemRect.top;
         const isSwitchedBoxWrapped =
           flexBox.dataset.forceWrap !== undefined && firstItemTop < lastItemTop;
 
-        if (isItemWrapped || isSwitchedBoxWrapped) {
-          flexItem.setAttribute(ITEM_WRAPPED_ATTR, "");
-        } else {
-          flexItem.removeAttribute(ITEM_WRAPPED_ATTR);
-        }
+        updateAttributeEfficiently(
+          flexItem,
+          ITEM_WRAPPED_ATTR,
+          isItemWrapped || isSwitchedBoxWrapped
+        );
       }
 
       // Remove temporary style
@@ -69,11 +157,11 @@ const markFlexboxAndItemsWrapState = (flexBox: HTMLElement) => {
       }
 
       // Process the flex container itself for standard wrapping
-      if (firstItemTop >= lastItemTop) {
-        flexBox.removeAttribute(PARENT_WRAPPING_ATTR);
-      } else {
-        flexBox.setAttribute(PARENT_WRAPPING_ATTR, "");
-      }
+      updateAttributeEfficiently(
+        flexBox,
+        PARENT_WRAPPING_ATTR,
+        !(firstItemTop >= lastItemTop)
+      );
 
       return;
     }
@@ -86,33 +174,39 @@ const markFlexboxAndItemsWrapState = (flexBox: HTMLElement) => {
       `${originalStyle}; flex-direction: row; flex-wrap: wrap-reverse;`
     );
 
-    // Group items based on their bottom position (in wrap-reverse, items in the same row have the same bottom)
-    const bottomPositions = new Map<number, HTMLElement[]>();
+    // Pre-calculate all element rects in one batch to avoid layout thrashing
+    for (const flexItem of flexItems) {
+      getCachedRect(flexItem);
+    }
 
-    // Process each flex item and group by bottom position (with a small tolerance for rounding)
+    // Group items by their bottom position using a more efficient approach
+    const bottomToItems = new Map<number, HTMLElement[]>();
     const tolerance = 1; // 1px tolerance
 
     for (const flexItem of flexItems) {
-      const itemRect = getRect(flexItem);
+      const itemBottom = getCachedRect(flexItem).bottom;
 
-      // Find if there's already a group with a similar bottom position
+      // Find the nearest bottom position within tolerance
       let foundGroup = false;
-      for (const [bottom, items] of bottomPositions.entries()) {
-        if (Math.abs(bottom - itemRect.bottom) <= tolerance) {
-          items.push(flexItem);
+      let closestBottom = itemBottom;
+
+      for (const bottom of bottomToItems.keys()) {
+        if (Math.abs(bottom - itemBottom) <= tolerance) {
+          closestBottom = bottom;
           foundGroup = true;
           break;
         }
       }
 
-      // If no matching group was found, create a new one
-      if (!foundGroup) {
-        bottomPositions.set(itemRect.bottom, [flexItem]);
+      if (foundGroup) {
+        bottomToItems.get(closestBottom)!.push(flexItem);
+      } else {
+        bottomToItems.set(itemBottom, [flexItem]);
       }
     }
 
-    // Sort bottom positions from highest (visually top in wrap-reverse) to lowest
-    const sortedBottoms = Array.from(bottomPositions.keys()).sort(
+    // Sort bottom positions from highest to lowest
+    const sortedBottoms = Array.from(bottomToItems.keys()).sort(
       (a, b) => b - a
     );
 
@@ -122,14 +216,10 @@ const markFlexboxAndItemsWrapState = (flexBox: HTMLElement) => {
 
       // Mark items that are not in the first row as wrapped
       for (const flexItem of flexItems) {
-        const itemBottom = getRect(flexItem).bottom;
-        if (Math.abs(itemBottom - topRowBottom) > tolerance) {
-          // This item is in a wrapped row
-          flexItem.setAttribute(ITEM_WRAPPED_ATTR, "");
-        } else {
-          // This item is in the first row
-          flexItem.removeAttribute(ITEM_WRAPPED_ATTR);
-        }
+        const itemBottom = getCachedRect(flexItem).bottom;
+        const isInFirstRow = Math.abs(itemBottom - topRowBottom) <= tolerance;
+
+        updateAttributeEfficiently(flexItem, ITEM_WRAPPED_ATTR, !isInFirstRow);
       }
     }
 
@@ -141,15 +231,17 @@ const markFlexboxAndItemsWrapState = (flexBox: HTMLElement) => {
     }
 
     // Mark the container based on whether there's more than one row
-    const hasWrapped = bottomPositions.size > 1;
+    const hasWrapped = bottomToItems.size > 1;
 
-    if (hasWrapped) {
-      flexBox.setAttribute(PARENT_WRAPPING_ATTR, "");
-    } else {
-      flexBox.removeAttribute(PARENT_WRAPPING_ATTR);
-    }
+    updateAttributeEfficiently(flexBox, PARENT_WRAPPING_ATTR, hasWrapped);
   });
 };
+
+// Create a debounced version of the marking function to reduce frequency of updates
+const debouncedMarkFlexboxAndItemsWrapState = debounce(
+  markFlexboxAndItemsWrapState,
+  16
+); // ~60fps
 
 type FlexContainerInput = HTMLElement | HTMLElement[] | string;
 
@@ -182,12 +274,13 @@ const init = (input: FlexContainerInput): (() => void) => {
 
   // Process each flex container
   for (const flexBox of flexBoxes) {
+    // Do the initial marking without debouncing
     markFlexboxAndItemsWrapState(flexBox);
 
     // Set up a ResizeObserver to watch for size changes
     const observer = new ResizeObserver((entries) =>
       entries.forEach((entry) =>
-        markFlexboxAndItemsWrapState(entry.target as HTMLElement)
+        debouncedMarkFlexboxAndItemsWrapState(entry.target as HTMLElement)
       )
     );
     observer.observe(flexBox);
