@@ -37,6 +37,9 @@ const getRect = (item: HTMLElement) => {
     top: Math.round(rect.top),
     bottom: Math.round(rect.bottom),
     left: Math.round(rect.left),
+    right: Math.round(rect.right),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
   };
 };
 
@@ -110,6 +113,7 @@ const markFlexboxAndItemsWrapState = (flexBox: HTMLElement) => {
     // Get the computed style to check for flex-wrap: wrap-reverse
     const computedStyle = window.getComputedStyle(flexBox);
     const isWrapReverse = computedStyle.flexWrap === "wrap-reverse";
+    const isRowDirection = computedStyle.flexDirection.includes("row");
 
     // Store original styles
     const originalStyle = flexBox.getAttribute("style") || "";
@@ -166,60 +170,81 @@ const markFlexboxAndItemsWrapState = (flexBox: HTMLElement) => {
       return;
     }
 
-    // For wrap-reverse, we need a different approach specifically designed for this case
+    // SPECIAL HANDLING FOR FLEX-WRAP: WRAP-REVERSE
+    // We'll use a fundamentally different approach:
+    // 1. Normalize to row direction and specific temp styles
+    // 2. Find which row each item belongs to based on top position relative to container
+    // 3. Mark items based on their normalized row
 
-    // Set a consistent style for measurement
+    // Force a specific style for measurement that preserves wrap-reverse
+    // but ensures consistent row sizing - these temporary styles won't affect
+    // the final appearance but will help in detection
     flexBox.setAttribute(
       "style",
-      `${originalStyle}; flex-direction: row; flex-wrap: wrap-reverse;`
+      `${originalStyle}; flex-direction: row; flex-wrap: wrap-reverse; align-items: stretch;`
     );
 
-    // Pre-calculate all element rects in one batch to avoid layout thrashing
-    for (const flexItem of flexItems) {
-      getCachedRect(flexItem);
-    }
+    // Grab the container rect after style changes
+    const containerRect = getRect(flexBox);
 
-    // Group items by their bottom position using a more efficient approach
-    const bottomToItems = new Map<number, HTMLElement[]>();
-    const tolerance = 1; // 1px tolerance
+    // For row direction, use top positions to determine rows
+    // For reverse wrap, we need to look at the *relative* position from container top
 
-    for (const flexItem of flexItems) {
-      const itemBottom = getCachedRect(flexItem).bottom;
+    // Group items by their top position (which indicates row in wrap-reverse)
+    const rowsByTopPos = new Map<number, HTMLElement[]>();
+    const tolerance = 1; // 1px tolerance for rounding errors
 
-      // Find the nearest bottom position within tolerance
-      let foundGroup = false;
-      let closestBottom = itemBottom;
+    // Collect all item metrics at once to avoid layout thrashing
+    const itemRects = flexItems.map((item) => getCachedRect(item));
 
-      for (const bottom of bottomToItems.keys()) {
-        if (Math.abs(bottom - itemBottom) <= tolerance) {
-          closestBottom = bottom;
-          foundGroup = true;
+    // First, collect all the unique row top positions
+    for (let i = 0; i < flexItems.length; i++) {
+      const itemRect = itemRects[i];
+      const topPos = itemRect.top;
+
+      // Try to find an existing row with a similar top position
+      let foundRow = false;
+      let matchedTop = topPos;
+
+      for (const existingTop of rowsByTopPos.keys()) {
+        if (Math.abs(existingTop - topPos) <= tolerance) {
+          foundRow = true;
+          matchedTop = existingTop;
           break;
         }
       }
 
-      if (foundGroup) {
-        bottomToItems.get(closestBottom)!.push(flexItem);
+      if (foundRow) {
+        rowsByTopPos.get(matchedTop)!.push(flexItems[i]);
       } else {
-        bottomToItems.set(itemBottom, [flexItem]);
+        rowsByTopPos.set(topPos, [flexItems[i]]);
       }
     }
 
-    // Sort bottom positions from highest to lowest
-    const sortedBottoms = Array.from(bottomToItems.keys()).sort(
-      (a, b) => b - a
-    );
+    // Sort rows by top position - in wrap-reverse, the rows at the top (smaller top values) are the wrapped ones
+    // and the row at the bottom (largest top value) is the first row
+    const sortedTops = Array.from(rowsByTopPos.keys()).sort((a, b) => a - b);
 
-    // The first row in wrap-reverse has the highest bottom value
-    if (sortedBottoms.length > 0) {
-      const topRowBottom = sortedBottoms[0];
+    // Determine if we have multiple rows
+    if (sortedTops.length > 1) {
+      // In wrap-reverse, the *last* row (highest top value) is the first/main row
+      // Items in other rows (with smaller top values) are the wrapped ones
+      const lastRowTop = sortedTops[sortedTops.length - 1];
 
-      // Mark items that are not in the first row as wrapped
-      for (const flexItem of flexItems) {
-        const itemBottom = getCachedRect(flexItem).bottom;
-        const isInFirstRow = Math.abs(itemBottom - topRowBottom) <= tolerance;
+      for (let i = 0; i < flexItems.length; i++) {
+        const item = flexItems[i];
+        const itemTop = itemRects[i].top;
 
-        updateAttributeEfficiently(flexItem, ITEM_WRAPPED_ATTR, !isInFirstRow);
+        // Check if this item is in the last row (which is the first/main row visually at the bottom)
+        const isInLastRow = Math.abs(itemTop - lastRowTop) <= tolerance;
+
+        // Items NOT in the last row are the wrapped ones (they appear at the top in wrap-reverse)
+        updateAttributeEfficiently(item, ITEM_WRAPPED_ATTR, !isInLastRow);
+      }
+    } else {
+      // No wrapping detected, ensure no items are marked
+      for (const item of flexItems) {
+        updateAttributeEfficiently(item, ITEM_WRAPPED_ATTR, false);
       }
     }
 
@@ -230,9 +255,8 @@ const markFlexboxAndItemsWrapState = (flexBox: HTMLElement) => {
       flexBox.removeAttribute("style");
     }
 
-    // Mark the container based on whether there's more than one row
-    const hasWrapped = bottomToItems.size > 1;
-
+    // Mark the container based on whether we detected multiple rows
+    const hasWrapped = sortedTops.length > 1;
     updateAttributeEfficiently(flexBox, PARENT_WRAPPING_ATTR, hasWrapped);
   });
 };
