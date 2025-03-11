@@ -3,13 +3,19 @@ const PARENT_WRAPPING_ATTR = "data-has-wrapped";
 const ITEM_WRAPPED_ATTR = "data-is-wrapped";
 
 /**
- * Gets the rounded top position of an element.
+ * Gets the bounding client rect with rounded values.
  * Rounding is used to account for sub-pixel discrepancies.
- * @param item - The HTML element to get the top position for
- * @returns The rounded top position of the element
+ * @param item - The HTML element to get positions for
+ * @returns The rounded values of key positions
  */
-const getTop = (item: HTMLElement) =>
-  Math.round(item.getBoundingClientRect().top);
+const getRect = (item: HTMLElement) => {
+  const rect = item.getBoundingClientRect();
+  return {
+    top: Math.round(rect.top),
+    bottom: Math.round(rect.bottom),
+    left: Math.round(rect.left),
+  };
+};
 
 /**
  * Marks the flex container and its items based on their wrap state.
@@ -19,7 +25,7 @@ const getTop = (item: HTMLElement) =>
 const markFlexboxAndItemsWrapState = (flexBox: HTMLElement) => {
   // Use requestAnimationFrame for performance optimization
   requestAnimationFrame(() => {
-    const flexItems = flexBox.children;
+    const flexItems = Array.from(flexBox.children) as HTMLElement[];
 
     // Skip if there are no flex items
     if (flexItems.length === 0) {
@@ -29,53 +35,118 @@ const markFlexboxAndItemsWrapState = (flexBox: HTMLElement) => {
     // Get the computed style to check for flex-wrap: wrap-reverse
     const computedStyle = window.getComputedStyle(flexBox);
     const isWrapReverse = computedStyle.flexWrap === "wrap-reverse";
+    const isRowDirection = computedStyle.flexDirection.includes("row");
 
-    // Temporarily set flex-direction to row for accurate calculations
-    // but preserve the original flex-wrap setting
+    // Store original styles
+    const originalStyle = flexBox.getAttribute("style") || "";
+
+    // For standard wrapping (not wrap-reverse), use the original logic which works well
+    if (!isWrapReverse) {
+      // Temporarily set flex-direction to row for accurate calculations
+      flexBox.setAttribute("style", `${originalStyle}; flex-direction: row;`);
+
+      const firstItemTop = getRect(flexItems[0]).top;
+      const lastItemTop = getRect(flexItems[flexItems.length - 1]).top;
+
+      // Process each flex item for standard wrapping
+      for (const flexItem of flexItems) {
+        const isItemWrapped = firstItemTop < getRect(flexItem).top;
+        const isSwitchedBoxWrapped =
+          flexBox.dataset.forceWrap !== undefined && firstItemTop < lastItemTop;
+
+        if (isItemWrapped || isSwitchedBoxWrapped) {
+          flexItem.setAttribute(ITEM_WRAPPED_ATTR, "");
+        } else {
+          flexItem.removeAttribute(ITEM_WRAPPED_ATTR);
+        }
+      }
+
+      // Remove temporary style
+      if (originalStyle) {
+        flexBox.setAttribute("style", originalStyle);
+      } else {
+        flexBox.removeAttribute("style");
+      }
+
+      // Process the flex container itself for standard wrapping
+      if (firstItemTop >= lastItemTop) {
+        flexBox.removeAttribute(PARENT_WRAPPING_ATTR);
+      } else {
+        flexBox.setAttribute(PARENT_WRAPPING_ATTR, "");
+      }
+
+      return;
+    }
+
+    // For wrap-reverse, we need a different approach specifically designed for this case
+
+    // Set a consistent style for measurement
     flexBox.setAttribute(
       "style",
-      `flex-direction: row; flex-wrap: ${computedStyle.flexWrap};`
+      `${originalStyle}; flex-direction: row; flex-wrap: wrap-reverse;`
     );
 
-    const firstItemTop = getTop(flexItems[0] as HTMLElement);
-    const lastItemTop = getTop(flexItems[flexItems.length - 1] as HTMLElement);
+    // Group items based on their bottom position (in wrap-reverse, items in the same row have the same bottom)
+    const bottomPositions = new Map<number, HTMLElement[]>();
 
-    // Process each flex item
-    for (const flexItem of flexItems as HTMLCollectionOf<HTMLElement>) {
-      // Different comparison based on wrap-reverse vs normal wrap
-      const itemTop = getTop(flexItem);
-      const isItemWrapped = isWrapReverse
-        ? firstItemTop > itemTop // For wrap-reverse, wrapped items are above
-        : firstItemTop < itemTop; // For normal wrap, wrapped items are below
+    // Process each flex item and group by bottom position (with a small tolerance for rounding)
+    const tolerance = 1; // 1px tolerance
 
-      const isSwitchedBoxWrapped =
-        flexBox.dataset.forceWrap !== undefined &&
-        (isWrapReverse
-          ? firstItemTop > lastItemTop
-          : firstItemTop < lastItemTop);
+    for (const flexItem of flexItems) {
+      const itemRect = getRect(flexItem);
 
-      // Add or remove data attribute based on wrap state
-      if (isItemWrapped || isSwitchedBoxWrapped) {
-        flexItem.setAttribute(ITEM_WRAPPED_ATTR, "");
-      } else {
-        flexItem.removeAttribute(ITEM_WRAPPED_ATTR);
+      // Find if there's already a group with a similar bottom position
+      let foundGroup = false;
+      for (const [bottom, items] of bottomPositions.entries()) {
+        if (Math.abs(bottom - itemRect.bottom) <= tolerance) {
+          items.push(flexItem);
+          foundGroup = true;
+          break;
+        }
+      }
+
+      // If no matching group was found, create a new one
+      if (!foundGroup) {
+        bottomPositions.set(itemRect.bottom, [flexItem]);
       }
     }
 
-    // Remove temporary style
-    flexBox.removeAttribute("style");
+    // Sort bottom positions from highest (visually top in wrap-reverse) to lowest
+    const sortedBottoms = Array.from(bottomPositions.keys()).sort(
+      (a, b) => b - a
+    );
 
-    // Process the flex container itself
-    // For wrap-reverse, no wrapping means first item is below or at same level as last item
-    // For normal wrap, no wrapping means first item is above or at same level as last item
-    const hasWrapped = isWrapReverse
-      ? firstItemTop <= lastItemTop
-      : firstItemTop >= lastItemTop;
+    // The first row in wrap-reverse has the highest bottom value
+    if (sortedBottoms.length > 0) {
+      const topRowBottom = sortedBottoms[0];
+
+      // Mark items that are not in the first row as wrapped
+      for (const flexItem of flexItems) {
+        const itemBottom = getRect(flexItem).bottom;
+        if (Math.abs(itemBottom - topRowBottom) > tolerance) {
+          // This item is in a wrapped row
+          flexItem.setAttribute(ITEM_WRAPPED_ATTR, "");
+        } else {
+          // This item is in the first row
+          flexItem.removeAttribute(ITEM_WRAPPED_ATTR);
+        }
+      }
+    }
+
+    // Restore original style
+    if (originalStyle) {
+      flexBox.setAttribute("style", originalStyle);
+    } else {
+      flexBox.removeAttribute("style");
+    }
+
+    // Mark the container based on whether there's more than one row
+    const hasWrapped = bottomPositions.size > 1;
 
     if (hasWrapped) {
-      flexBox.removeAttribute(PARENT_WRAPPING_ATTR);
-    } else {
       flexBox.setAttribute(PARENT_WRAPPING_ATTR, "");
+    } else {
+      flexBox.removeAttribute(PARENT_WRAPPING_ATTR);
     }
   });
 };
