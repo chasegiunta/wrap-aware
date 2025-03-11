@@ -14,34 +14,34 @@
     <div ref="container" class="flex gap-1 w-full min-h-[142px]">
       <div
         ref="resizable"
-        class="resize-x max-w-full w-screen overflow-auto border border-slate-300 bg-fixed bg-grid-light bg-slate-800 shadow-inner rounded-xl"
+        class="resize-x @container max-w-full w-screen overflow-auto border border-slate-300 bg-fixed bg-grid-light bg-slate-800 shadow-inner rounded-xl"
       >
         <div
           ref="flexParent"
-          class="p-10 flex flex-wrap gap-6 bg-linear-to-t"
+          class="p-4 @sm:p-8 flex flex-wrap items-start gap-x-6 gap-y-4 bg-linear-to-t"
           :class="parentClasses"
         >
           <div
             :class="childClasses"
-            class="rounded-md px-14 py-4 bg-blue-600 shadow-lg shadow-blue-900/80 border-2 border-blue-500 text-white font-medium font-mono flex-1 text-center"
+            class="rounded-md px-14 py-4 bg-blue-600 shadow-lg w-full shadow-blue-900/80 border-2 border-blue-500 text-white font-medium font-mono flex-1 text-center"
           >
             01
           </div>
           <div
             :class="childClasses"
-            class="rounded-md px-14 py-4 bg-blue-600 shadow-lg shadow-blue-900/80 border-2 border-blue-500 text-white font-medium font-mono flex-1 text-center"
+            class="rounded-md px-14 py-8 bg-blue-600 shadow-lg w-full shadow-blue-900/80 border-2 border-blue-500 text-white font-medium font-mono flex-1 text-center"
           >
             02
           </div>
           <div
             :class="childClasses"
-            class="rounded-md px-14 py-4 bg-blue-600 shadow-lg shadow-blue-900/80 border-2 border-blue-500 text-white font-medium font-mono flex-1 text-center"
+            class="rounded-md px-14 py-4 bg-blue-600 shadow-lg w-full shadow-blue-900/80 border-2 border-blue-500 text-white font-medium font-mono flex-1 text-center"
           >
             03
           </div>
           <div
             :class="childClasses"
-            class="rounded-md px-14 py-4 bg-blue-600 shadow-lg shadow-blue-900/80 border-2 border-blue-500 text-white font-medium font-mono flex-1 text-center"
+            class="rounded-md px-14 py-6 bg-blue-600 shadow-lg w-full shadow-blue-900/80 border-2 border-blue-500 text-white font-medium font-mono flex-1 text-center"
           >
             04
           </div>
