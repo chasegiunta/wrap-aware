@@ -2,6 +2,12 @@
 const PARENT_WRAPPING_ATTR = "data-has-wrapped";
 const ITEM_WRAPPED_ATTR = "data-is-wrapped";
 
+// Store reference widths for containers that have been unwrapped
+const containerUnwrapWidths = new WeakMap<HTMLElement, number>();
+
+// Store active updates to prevent flickering
+const activeUpdates = new WeakSet<HTMLElement>();
+
 /**
  * Simple debounce implementation to limit the frequency of function calls
  * @param fn - The function to debounce
@@ -80,8 +86,147 @@ const updateAttributeEfficiently = (
   }
 };
 
+/**
+ * Get the horizontal padding of an element
+ * @param element - The element to check
+ * @returns The total horizontal padding in pixels
+ */
+const getHorizontalPadding = (element: HTMLElement): number => {
+  const computedStyle = window.getComputedStyle(element);
+  const paddingLeft = parseInt(computedStyle.paddingLeft, 10) || 0;
+  const paddingRight = parseInt(computedStyle.paddingRight, 10) || 0;
+  return paddingLeft + paddingRight;
+};
+
+/**
+ * Tests if items would fit in a single line if there was no padding
+ * @param flexBox - The flex container
+ * @param flexItems - The flex items
+ * @returns Whether items would fit without wrapping if padding was removed
+ */
+const wouldItemsFitWithoutPadding = (
+  flexBox: HTMLElement,
+  flexItems: HTMLElement[]
+): boolean => {
+  // Get current padding applied to the container
+  const horizontalPadding = getHorizontalPadding(flexBox);
+
+  // If there's minimal padding, no need for the check
+  if (horizontalPadding <= 2) {
+    return false;
+  }
+
+  // Check if we've recorded a width where items fit without wrapping
+  const cache = containerCache.get(flexBox);
+  if (cache && cache.lastUnwrappedWidth > 0) {
+    // Calculate the effective size without padding
+    const currentWidthWithoutPadding = flexBox.clientWidth + horizontalPadding;
+
+    // If current width (ignoring padding) is greater than or equal
+    // to the last width where items fit without wrapping
+    if (currentWidthWithoutPadding >= cache.lastUnwrappedWidth) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
 // Cache to store previous measurements for elements
 const measurementCache = new WeakMap<HTMLElement, string>();
+
+/**
+ * Collect position data for consistent wrap detection in a single pass
+ * @param flexBox - Flex container element
+ * @param flexItems - Array of flex items
+ * @returns Information about wrapping status
+ */
+const collectWrappingData = (
+  flexBox: HTMLElement,
+  flexItems: HTMLElement[]
+): { isWrapped: boolean; wrappedItems: HTMLElement[] } => {
+  // If no items, nothing is wrapped
+  if (flexItems.length === 0) {
+    return { isWrapped: false, wrappedItems: [] };
+  }
+
+  // Store original styles
+  const originalStyle = flexBox.getAttribute("style") || "";
+
+  // Get the computed style to check for flex-wrap and direction
+  const computedStyle = window.getComputedStyle(flexBox);
+  const isWrapReverse = computedStyle.flexWrap === "wrap-reverse";
+
+  // Apply temporary styles for measurement
+  if (isWrapReverse) {
+    // For wrap-reverse, set consistent measuring styles
+    flexBox.setAttribute(
+      "style",
+      `${originalStyle}; flex-direction: row; flex-wrap: wrap-reverse; align-items: stretch;`
+    );
+  } else {
+    // For standard flex-wrap, ensure row direction
+    flexBox.setAttribute("style", `${originalStyle}; flex-direction: row;`);
+  }
+
+  // Get positions of all items
+  const itemPositions = flexItems.map((item) => {
+    const rect = getRect(item);
+    return { item, top: rect.top };
+  });
+
+  // Restore original style
+  if (originalStyle) {
+    flexBox.setAttribute("style", originalStyle);
+  } else {
+    flexBox.removeAttribute("style");
+  }
+
+  // Group items by position (tolerance of 1px for sub-pixel rendering)
+  const rowsByPosition = new Map<number, HTMLElement[]>();
+  const tolerance = 1;
+
+  for (const { item, top } of itemPositions) {
+    // Find existing row or create new one
+    let foundRow = false;
+    let rowPosition = top;
+
+    for (const position of rowsByPosition.keys()) {
+      if (Math.abs(position - top) <= tolerance) {
+        foundRow = true;
+        rowPosition = position;
+        break;
+      }
+    }
+
+    if (!foundRow) {
+      rowsByPosition.set(top, []);
+    }
+
+    rowsByPosition.get(rowPosition)!.push(item);
+  }
+
+  // Check if wrapping has occurred by counting rows
+  const hasWrapped = rowsByPosition.size > 1;
+
+  // Get baseline row position - differs based on wrap-reverse
+  const positions = Array.from(rowsByPosition.keys()).sort((a, b) => a - b);
+  const baselinePosition = isWrapReverse
+    ? positions[positions.length - 1]
+    : positions[0];
+
+  // Collect wrapped items
+  const wrappedItems: HTMLElement[] = [];
+
+  for (const [position, items] of rowsByPosition.entries()) {
+    if (Math.abs(position - baselinePosition) > tolerance) {
+      // This is not the baseline row, items are wrapped
+      wrappedItems.push(...items);
+    }
+  }
+
+  return { isWrapped: hasWrapped, wrappedItems };
+};
 
 /**
  * Marks the flex container and its items based on their wrap state.
@@ -89,183 +234,82 @@ const measurementCache = new WeakMap<HTMLElement, string>();
  * @param flexBox - The flex container element
  */
 const markFlexboxAndItemsWrapState = (flexBox: HTMLElement) => {
-  // Use requestAnimationFrame for performance optimization
+  // Skip if already processing this container
+  if (activeUpdates.has(flexBox)) {
+    return;
+  }
+
+  // Mark container as being processed
+  activeUpdates.add(flexBox);
+
+  // Use requestAnimationFrame for performance optimization and visual consistency
   requestAnimationFrame(() => {
-    const flexItems = Array.from(flexBox.children) as HTMLElement[];
+    try {
+      const flexItems = Array.from(flexBox.children) as HTMLElement[];
 
-    // Skip if there are no flex items
-    if (flexItems.length === 0) {
-      return;
-    }
+      // Force wrapping via dataset always takes precedence
+      const forceWrap = flexBox.dataset.forceWrap !== undefined;
 
-    // Check if measurements have already been cached and dimensions haven't changed
-    const dimensionKey = `${flexBox.clientWidth},${flexBox.clientHeight}`;
-    const cachedKey = measurementCache.get(flexBox);
-
-    // If the dimensions haven't changed since last measurement, skip processing
-    if (cachedKey === dimensionKey) {
-      return;
-    }
-
-    // Update the cache with current dimensions
-    measurementCache.set(flexBox, dimensionKey);
-
-    // Get the computed style to check for flex-wrap: wrap-reverse
-    const computedStyle = window.getComputedStyle(flexBox);
-    const isWrapReverse = computedStyle.flexWrap === "wrap-reverse";
-    const isRowDirection = computedStyle.flexDirection.includes("row");
-
-    // Store original styles
-    const originalStyle = flexBox.getAttribute("style") || "";
-
-    // Create a cache for the current run to avoid multiple getBoundingClientRect calls
-    const rectCache = new Map<HTMLElement, ReturnType<typeof getRect>>();
-
-    const getCachedRect = (element: HTMLElement) => {
-      if (!rectCache.has(element)) {
-        rectCache.set(element, getRect(element));
-      }
-      return rectCache.get(element)!;
-    };
-
-    // For standard wrapping (not wrap-reverse), use the original logic which works well
-    if (!isWrapReverse) {
-      // Temporarily set flex-direction to row for accurate calculations
-      flexBox.setAttribute("style", `${originalStyle}; flex-direction: row;`);
-
-      // Get measurements after style change in a batched way to avoid layout thrashing
-      const firstItemRect = getCachedRect(flexItems[0]);
-      const lastItemRect = getCachedRect(flexItems[flexItems.length - 1]);
-      const firstItemTop = firstItemRect.top;
-      const lastItemTop = lastItemRect.top;
-
-      // Process each flex item for standard wrapping
-      for (const flexItem of flexItems) {
-        const itemRect = getCachedRect(flexItem);
-        const isItemWrapped = firstItemTop < itemRect.top;
-        const isSwitchedBoxWrapped =
-          flexBox.dataset.forceWrap !== undefined && firstItemTop < lastItemTop;
-
-        updateAttributeEfficiently(
-          flexItem,
-          ITEM_WRAPPED_ATTR,
-          isItemWrapped || isSwitchedBoxWrapped
-        );
-      }
-
-      // Remove temporary style
-      if (originalStyle) {
-        flexBox.setAttribute("style", originalStyle);
-      } else {
-        flexBox.removeAttribute("style");
-      }
-
-      // Process the flex container itself for standard wrapping
-      updateAttributeEfficiently(
+      // Get wrapping data
+      const { isWrapped: detectedWrapping, wrappedItems } = collectWrappingData(
         flexBox,
-        PARENT_WRAPPING_ATTR,
-        !(firstItemTop >= lastItemTop)
+        flexItems
       );
 
-      return;
-    }
+      // Final wrapping state
+      const isWrapped = forceWrap || detectedWrapping;
 
-    // SPECIAL HANDLING FOR FLEX-WRAP: WRAP-REVERSE
-    // We'll use a fundamentally different approach:
-    // 1. Normalize to row direction and specific temp styles
-    // 2. Find which row each item belongs to based on top position relative to container
-    // 3. Mark items based on their normalized row
+      // Check for unwrapping when currently wrapped with padding
+      if (
+        isWrapped &&
+        !forceWrap &&
+        flexBox.hasAttribute(PARENT_WRAPPING_ATTR)
+      ) {
+        const currentWidth = flexBox.offsetWidth; // Use offsetWidth which includes borders
+        const unwrapWidth = containerUnwrapWidths.get(flexBox);
 
-    // Force a specific style for measurement that preserves wrap-reverse
-    // but ensures consistent row sizing - these temporary styles won't affect
-    // the final appearance but will help in detection
-    flexBox.setAttribute(
-      "style",
-      `${originalStyle}; flex-direction: row; flex-wrap: wrap-reverse; align-items: stretch;`
-    );
+        // If we know an unwrap width and current width is at least that large,
+        // override the wrapping state
+        if (unwrapWidth && currentWidth >= unwrapWidth) {
+          // Mark as unwrapped when width is sufficient
+          updateAttributeEfficiently(flexBox, PARENT_WRAPPING_ATTR, false);
 
-    // Grab the container rect after style changes
-    const containerRect = getRect(flexBox);
+          // Clear all item wrapped attributes
+          for (const item of flexItems) {
+            updateAttributeEfficiently(item, ITEM_WRAPPED_ATTR, false);
+          }
 
-    // For row direction, use top positions to determine rows
-    // For reverse wrap, we need to look at the *relative* position from container top
-
-    // Group items by their top position (which indicates row in wrap-reverse)
-    const rowsByTopPos = new Map<number, HTMLElement[]>();
-    const tolerance = 1; // 1px tolerance for rounding errors
-
-    // Collect all item metrics at once to avoid layout thrashing
-    const itemRects = flexItems.map((item) => getCachedRect(item));
-
-    // First, collect all the unique row top positions
-    for (let i = 0; i < flexItems.length; i++) {
-      const itemRect = itemRects[i];
-      const topPos = itemRect.top;
-
-      // Try to find an existing row with a similar top position
-      let foundRow = false;
-      let matchedTop = topPos;
-
-      for (const existingTop of rowsByTopPos.keys()) {
-        if (Math.abs(existingTop - topPos) <= tolerance) {
-          foundRow = true;
-          matchedTop = existingTop;
-          break;
+          // Finish early
+          return;
         }
       }
 
-      if (foundRow) {
-        rowsByTopPos.get(matchedTop)!.push(flexItems[i]);
-      } else {
-        rowsByTopPos.set(topPos, [flexItems[i]]);
-      }
-    }
+      // Update the container's wrapping attribute
+      updateAttributeEfficiently(flexBox, PARENT_WRAPPING_ATTR, isWrapped);
 
-    // Sort rows by top position - in wrap-reverse, the rows at the top (smaller top values) are the wrapped ones
-    // and the row at the bottom (largest top value) is the first row
-    const sortedTops = Array.from(rowsByTopPos.keys()).sort((a, b) => a - b);
-
-    // Determine if we have multiple rows
-    if (sortedTops.length > 1) {
-      // In wrap-reverse, the *last* row (highest top value) is the first/main row
-      // Items in other rows (with smaller top values) are the wrapped ones
-      const lastRowTop = sortedTops[sortedTops.length - 1];
-
-      for (let i = 0; i < flexItems.length; i++) {
-        const item = flexItems[i];
-        const itemTop = itemRects[i].top;
-
-        // Check if this item is in the last row (which is the first/main row visually at the bottom)
-        const isInLastRow = Math.abs(itemTop - lastRowTop) <= tolerance;
-
-        // Items NOT in the last row are the wrapped ones (they appear at the top in wrap-reverse)
-        updateAttributeEfficiently(item, ITEM_WRAPPED_ATTR, !isInLastRow);
-      }
-    } else {
-      // No wrapping detected, ensure no items are marked
+      // Update item attributes
       for (const item of flexItems) {
-        updateAttributeEfficiently(item, ITEM_WRAPPED_ATTR, false);
+        const isItemWrapped = isWrapped && wrappedItems.includes(item);
+        updateAttributeEfficiently(item, ITEM_WRAPPED_ATTR, isItemWrapped);
       }
-    }
 
-    // Restore original style
-    if (originalStyle) {
-      flexBox.setAttribute("style", originalStyle);
-    } else {
-      flexBox.removeAttribute("style");
+      // Remember the current width if items are not wrapped
+      // This is the key to handling padding correctly
+      if (!isWrapped) {
+        containerUnwrapWidths.set(flexBox, flexBox.offsetWidth);
+      }
+    } finally {
+      // Always remove active marker
+      activeUpdates.delete(flexBox);
     }
-
-    // Mark the container based on whether we detected multiple rows
-    const hasWrapped = sortedTops.length > 1;
-    updateAttributeEfficiently(flexBox, PARENT_WRAPPING_ATTR, hasWrapped);
   });
 };
 
-// Create a debounced version of the marking function to reduce frequency of updates
+// Use a slightly shorter debounce time for better responsiveness
 const debouncedMarkFlexboxAndItemsWrapState = debounce(
   markFlexboxAndItemsWrapState,
-  16
-); // ~60fps
+  10
+);
 
 type FlexContainerInput = HTMLElement | HTMLElement[] | string;
 
@@ -309,6 +353,19 @@ const init = (input: FlexContainerInput): (() => void) => {
     );
     observer.observe(flexBox);
     observers.push(observer);
+
+    // Also observe style/class changes that might affect padding
+    const mutationObserver = new MutationObserver(() => {
+      markFlexboxAndItemsWrapState(flexBox);
+    });
+
+    mutationObserver.observe(flexBox, {
+      attributes: true,
+      attributeFilter: ["style", "class"],
+    });
+
+    // Add this observer to our list so we can disconnect it later
+    observers.push(mutationObserver as unknown as ResizeObserver);
   }
 
   // Return a function to destroy the observers
