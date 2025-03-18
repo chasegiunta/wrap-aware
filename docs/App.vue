@@ -59,6 +59,18 @@
     class="mb-10"
   ></Example>
 
+  <p class="text-base sm:text-lg font-medium">
+    Padding applied to the parent flexbox when children wrap doesn't affect
+    detection:
+  </p>
+
+  <Example
+    parent-classes="flex-wrap has-data-is-wrapped:from-pink-500/50 has-data-is-wrapped:px-32"
+    child-classes="data-is-wrapped:bg-pink-500 data-is-wrapped:border-pink-400 data-is-wrapped:shadow-pink-900/80"
+    :code-sample="exampleFourCodeSample"
+    class="mb-10"
+  ></Example>
+
   <hr class="border w-full border-slate-500 mb-4" />
 
   <p class="mb-6 text-slate-600">
@@ -113,6 +125,17 @@ const exampleThreeCodeSample = ref(`
 <div
   data-has-wrapped
   class="flex flex-wrap-reverse data-has-wrapped:from-pink-500/50"
+>
+  <div class="data-is-wrapped:bg-pink-500 data-is-wrapped:border-pink-400 data-is-wrapped:shadow-pink-900/80">01</div>
+  <div class="data-is-wrapped:bg-pink-500 data-is-wrapped:border-pink-400 data-is-wrapped:shadow-pink-900/80">02</div>
+  <div class="data-is-wrapped:bg-pink-500 data-is-wrapped:border-pink-400 data-is-wrapped:shadow-pink-900/80">03</div>
+  <div data-is-wrapped class="data-is-wrapped:bg-pink-500 data-is-wrapped:border-pink-400 data-is-wrapped:shadow-pink-900/80">04</div>
+</div>`);
+
+const exampleFourCodeSample = ref(`
+<div
+  data-has-wrapped
+  class="flex flex-wrap has-data-is-wrapped:from-pink-500/50 has-data-is-wrapped:px-16"
 >
   <div class="data-is-wrapped:bg-pink-500 data-is-wrapped:border-pink-400 data-is-wrapped:shadow-pink-900/80">01</div>
   <div class="data-is-wrapped:bg-pink-500 data-is-wrapped:border-pink-400 data-is-wrapped:shadow-pink-900/80">02</div>
