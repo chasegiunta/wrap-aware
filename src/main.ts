@@ -2,6 +2,14 @@
 const PARENT_WRAPPING_ATTR = "data-has-wrapped";
 const ITEM_WRAPPED_ATTR = "data-is-wrapped";
 
+// Track width without padding to detect unwrapping potential
+interface ContainerCache {
+  dimensions: string;
+  lastUnwrappedWidth: number;
+}
+
+const containerCache = new WeakMap<HTMLElement, ContainerCache>();
+
 /**
  * Simple debounce implementation to limit the frequency of function calls
  * @param fn - The function to debounce
@@ -80,6 +88,52 @@ const updateAttributeEfficiently = (
   }
 };
 
+/**
+ * Get the horizontal padding of an element
+ * @param element - The element to check
+ * @returns The total horizontal padding in pixels
+ */
+const getHorizontalPadding = (element: HTMLElement): number => {
+  const computedStyle = window.getComputedStyle(element);
+  const paddingLeft = parseInt(computedStyle.paddingLeft, 10) || 0;
+  const paddingRight = parseInt(computedStyle.paddingRight, 10) || 0;
+  return paddingLeft + paddingRight;
+};
+
+/**
+ * Tests if items would fit in a single line if there was no padding
+ * @param flexBox - The flex container
+ * @param flexItems - The flex items
+ * @returns Whether items would fit without wrapping if padding was removed
+ */
+const wouldItemsFitWithoutPadding = (
+  flexBox: HTMLElement,
+  flexItems: HTMLElement[]
+): boolean => {
+  // Get current padding applied to the container
+  const horizontalPadding = getHorizontalPadding(flexBox);
+
+  // If there's minimal padding, no need for the check
+  if (horizontalPadding <= 2) {
+    return false;
+  }
+
+  // Check if we've recorded a width where items fit without wrapping
+  const cache = containerCache.get(flexBox);
+  if (cache && cache.lastUnwrappedWidth > 0) {
+    // Calculate the effective size without padding
+    const currentWidthWithoutPadding = flexBox.clientWidth + horizontalPadding;
+
+    // If current width (ignoring padding) is greater than or equal
+    // to the last width where items fit without wrapping
+    if (currentWidthWithoutPadding >= cache.lastUnwrappedWidth) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
 // Cache to store previous measurements for elements
 const measurementCache = new WeakMap<HTMLElement, string>();
 
@@ -98,17 +152,26 @@ const markFlexboxAndItemsWrapState = (flexBox: HTMLElement) => {
       return;
     }
 
-    // Check if measurements have already been cached and dimensions haven't changed
+    // Get current container dimensions for cache key
     const dimensionKey = `${flexBox.clientWidth},${flexBox.clientHeight}`;
-    const cachedKey = measurementCache.get(flexBox);
 
-    // If the dimensions haven't changed since last measurement, skip processing
-    if (cachedKey === dimensionKey) {
+    // Get cache or initialize it
+    let cache = containerCache.get(flexBox);
+    if (!cache) {
+      cache = {
+        dimensions: dimensionKey,
+        lastUnwrappedWidth: 0,
+      };
+      containerCache.set(flexBox, cache);
+    }
+
+    // If dimensions haven't changed, skip processing
+    if (cache.dimensions === dimensionKey) {
       return;
     }
 
     // Update the cache with current dimensions
-    measurementCache.set(flexBox, dimensionKey);
+    cache.dimensions = dimensionKey;
 
     // Get the computed style to check for flex-wrap: wrap-reverse
     const computedStyle = window.getComputedStyle(flexBox);
@@ -139,12 +202,31 @@ const markFlexboxAndItemsWrapState = (flexBox: HTMLElement) => {
       const firstItemTop = firstItemRect.top;
       const lastItemTop = lastItemRect.top;
 
+      // Check if items are visually wrapped
+      let isWrapped = firstItemTop < lastItemTop;
+      const forceWrap = flexBox.dataset.forceWrap !== undefined;
+
+      if (forceWrap) {
+        isWrapped = true;
+      } else if (isWrapped && flexBox.hasAttribute(PARENT_WRAPPING_ATTR)) {
+        // If items are visually wrapped but might fit without padding
+        if (wouldItemsFitWithoutPadding(flexBox, flexItems)) {
+          isWrapped = false;
+        }
+      }
+
+      // If items are not wrapped, record this width as one where items fit
+      if (!isWrapped && !forceWrap) {
+        // Record width + current padding as the unwrapped width
+        cache.lastUnwrappedWidth =
+          flexBox.clientWidth + getHorizontalPadding(flexBox);
+      }
+
       // Process each flex item for standard wrapping
       for (const flexItem of flexItems) {
         const itemRect = getCachedRect(flexItem);
-        const isItemWrapped = firstItemTop < itemRect.top;
-        const isSwitchedBoxWrapped =
-          flexBox.dataset.forceWrap !== undefined && firstItemTop < lastItemTop;
+        const isItemWrapped = isWrapped && firstItemTop < itemRect.top;
+        const isSwitchedBoxWrapped = forceWrap && firstItemTop < lastItemTop;
 
         updateAttributeEfficiently(
           flexItem,
@@ -160,12 +242,8 @@ const markFlexboxAndItemsWrapState = (flexBox: HTMLElement) => {
         flexBox.removeAttribute("style");
       }
 
-      // Process the flex container itself for standard wrapping
-      updateAttributeEfficiently(
-        flexBox,
-        PARENT_WRAPPING_ATTR,
-        !(firstItemTop >= lastItemTop)
-      );
+      // Update container wrapping attribute
+      updateAttributeEfficiently(flexBox, PARENT_WRAPPING_ATTR, isWrapped);
 
       return;
     }
@@ -226,7 +304,25 @@ const markFlexboxAndItemsWrapState = (flexBox: HTMLElement) => {
     const sortedTops = Array.from(rowsByTopPos.keys()).sort((a, b) => a - b);
 
     // Determine if we have multiple rows
-    if (sortedTops.length > 1) {
+    let hasWrapped = sortedTops.length > 1;
+    const forceWrap = flexBox.dataset.forceWrap !== undefined;
+
+    if (forceWrap) {
+      hasWrapped = true;
+    } else if (hasWrapped && flexBox.hasAttribute(PARENT_WRAPPING_ATTR)) {
+      // Check if items would fit without padding
+      if (wouldItemsFitWithoutPadding(flexBox, flexItems)) {
+        hasWrapped = false;
+      }
+    }
+
+    // If not wrapped, record this width
+    if (!hasWrapped && !forceWrap) {
+      cache.lastUnwrappedWidth =
+        flexBox.clientWidth + getHorizontalPadding(flexBox);
+    }
+
+    if (hasWrapped) {
       // In wrap-reverse, the *last* row (highest top value) is the first/main row
       // Items in other rows (with smaller top values) are the wrapped ones
       const lastRowTop = sortedTops[sortedTops.length - 1];
@@ -256,7 +352,6 @@ const markFlexboxAndItemsWrapState = (flexBox: HTMLElement) => {
     }
 
     // Mark the container based on whether we detected multiple rows
-    const hasWrapped = sortedTops.length > 1;
     updateAttributeEfficiently(flexBox, PARENT_WRAPPING_ATTR, hasWrapped);
   });
 };
@@ -309,6 +404,19 @@ const init = (input: FlexContainerInput): (() => void) => {
     );
     observer.observe(flexBox);
     observers.push(observer);
+
+    // Also observe style/class changes that might affect padding
+    const mutationObserver = new MutationObserver(() => {
+      markFlexboxAndItemsWrapState(flexBox);
+    });
+
+    mutationObserver.observe(flexBox, {
+      attributes: true,
+      attributeFilter: ["style", "class"],
+    });
+
+    // Add this observer to our list so we can disconnect it later
+    observers.push(mutationObserver as unknown as ResizeObserver);
   }
 
   // Return a function to destroy the observers
