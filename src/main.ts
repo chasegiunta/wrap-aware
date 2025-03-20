@@ -8,6 +8,10 @@ const containerUnwrapWidths = new WeakMap<HTMLElement, number>();
 // Store active updates to prevent flickering
 const activeUpdates = new WeakSet<HTMLElement>();
 
+// Store last state to prevent unnecessary DOM updates
+const lastContainerStates = new WeakMap<HTMLElement, boolean>();
+const lastItemStates = new WeakMap<HTMLElement, boolean>();
+
 /**
  * Simple debounce implementation to limit the frequency of function calls
  * @param fn - The function to debounce
@@ -66,23 +70,32 @@ const attributeStateMatches = (
 };
 
 /**
- * Efficiently set or remove an attribute based on condition
+ * Efficiently set or remove an attribute based on condition, with additional optimization
+ * to prevent unnecessary DOM updates that trigger re-renders
  * @param element - The HTML element to modify
  * @param attribute - The attribute name
  * @param shouldHaveAttribute - Whether the attribute should be present
+ * @param stateMap - WeakMap to track last known state for the element
  */
-const updateAttributeEfficiently = (
+const updateAttributeWithMemory = (
   element: HTMLElement,
   attribute: string,
-  shouldHaveAttribute: boolean
+  shouldHaveAttribute: boolean,
+  stateMap: WeakMap<HTMLElement, boolean>
 ): void => {
-  // Only update the DOM if the current state doesn't match the desired state
-  if (!attributeStateMatches(element, attribute, shouldHaveAttribute)) {
+  // Get last known state, default to opposite of desired state
+  const lastState = stateMap.get(element) ?? !shouldHaveAttribute;
+
+  // Only update if state has changed
+  if (lastState !== shouldHaveAttribute) {
     if (shouldHaveAttribute) {
       element.setAttribute(attribute, "");
     } else {
       element.removeAttribute(attribute);
     }
+
+    // Remember new state
+    stateMap.set(element, shouldHaveAttribute);
   }
 };
 
@@ -117,14 +130,14 @@ const wouldItemsFitWithoutPadding = (
   }
 
   // Check if we've recorded a width where items fit without wrapping
-  const cache = containerCache.get(flexBox);
-  if (cache && cache.lastUnwrappedWidth > 0) {
+  const unwrapWidth = containerUnwrapWidths.get(flexBox);
+  if (unwrapWidth) {
     // Calculate the effective size without padding
     const currentWidthWithoutPadding = flexBox.clientWidth + horizontalPadding;
 
     // If current width (ignoring padding) is greater than or equal
     // to the last width where items fit without wrapping
-    if (currentWidthWithoutPadding >= cache.lastUnwrappedWidth) {
+    if (currentWidthWithoutPadding >= unwrapWidth) {
       return true;
     }
   }
@@ -228,6 +241,9 @@ const collectWrappingData = (
   return { isWrapped: hasWrapped, wrappedItems };
 };
 
+// Cache for container dimensions to prevent unnecessary recalculation
+const dimensionCache = new WeakMap<HTMLElement, string>();
+
 /**
  * Marks the flex container and its items based on their wrap state.
  * This function is called whenever the flex container's size changes.
@@ -238,6 +254,18 @@ const markFlexboxAndItemsWrapState = (flexBox: HTMLElement) => {
   if (activeUpdates.has(flexBox)) {
     return;
   }
+
+  // Check for dimension changes
+  const currentDimensions = `${flexBox.offsetWidth},${flexBox.offsetHeight}`;
+  const lastDimensions = dimensionCache.get(flexBox);
+
+  // Skip if dimensions haven't changed
+  if (currentDimensions === lastDimensions) {
+    return;
+  }
+
+  // Store new dimensions
+  dimensionCache.set(flexBox, currentDimensions);
 
   // Mark container as being processed
   activeUpdates.add(flexBox);
@@ -272,11 +300,21 @@ const markFlexboxAndItemsWrapState = (flexBox: HTMLElement) => {
         // override the wrapping state
         if (unwrapWidth && currentWidth >= unwrapWidth) {
           // Mark as unwrapped when width is sufficient
-          updateAttributeEfficiently(flexBox, PARENT_WRAPPING_ATTR, false);
+          updateAttributeWithMemory(
+            flexBox,
+            PARENT_WRAPPING_ATTR,
+            false,
+            lastContainerStates
+          );
 
           // Clear all item wrapped attributes
           for (const item of flexItems) {
-            updateAttributeEfficiently(item, ITEM_WRAPPED_ATTR, false);
+            updateAttributeWithMemory(
+              item,
+              ITEM_WRAPPED_ATTR,
+              false,
+              lastItemStates
+            );
           }
 
           // Finish early
@@ -285,12 +323,22 @@ const markFlexboxAndItemsWrapState = (flexBox: HTMLElement) => {
       }
 
       // Update the container's wrapping attribute
-      updateAttributeEfficiently(flexBox, PARENT_WRAPPING_ATTR, isWrapped);
+      updateAttributeWithMemory(
+        flexBox,
+        PARENT_WRAPPING_ATTR,
+        isWrapped,
+        lastContainerStates
+      );
 
       // Update item attributes
       for (const item of flexItems) {
         const isItemWrapped = isWrapped && wrappedItems.includes(item);
-        updateAttributeEfficiently(item, ITEM_WRAPPED_ATTR, isItemWrapped);
+        updateAttributeWithMemory(
+          item,
+          ITEM_WRAPPED_ATTR,
+          isItemWrapped,
+          lastItemStates
+        );
       }
 
       // Remember the current width if items are not wrapped
@@ -305,10 +353,22 @@ const markFlexboxAndItemsWrapState = (flexBox: HTMLElement) => {
   });
 };
 
-// Use a slightly shorter debounce time for better responsiveness
-const debouncedMarkFlexboxAndItemsWrapState = debounce(
+// Throttle resize observations to reduce unnecessary updates
+const throttle = (fn: Function, delay: number) => {
+  let lastCall = 0;
+  return function (...args: any[]) {
+    const now = Date.now();
+    if (now - lastCall >= delay) {
+      lastCall = now;
+      fn(...args);
+    }
+  };
+};
+
+// Throttled version for resize events (60fps)
+const throttledMarkFlexboxAndItemsWrapState = throttle(
   markFlexboxAndItemsWrapState,
-  10
+  16
 );
 
 type FlexContainerInput = HTMLElement | HTMLElement[] | string;
@@ -342,21 +402,39 @@ const init = (input: FlexContainerInput): (() => void) => {
 
   // Process each flex container
   for (const flexBox of flexBoxes) {
-    // Do the initial marking without debouncing
+    // Do the initial marking
     markFlexboxAndItemsWrapState(flexBox);
 
-    // Set up a ResizeObserver to watch for size changes
-    const observer = new ResizeObserver((entries) =>
-      entries.forEach((entry) =>
-        debouncedMarkFlexboxAndItemsWrapState(entry.target as HTMLElement)
-      )
-    );
+    // Set up a ResizeObserver to watch for size changes - use throttled callback
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        throttledMarkFlexboxAndItemsWrapState(entry.target as HTMLElement);
+      }
+    });
+
     observer.observe(flexBox);
     observers.push(observer);
 
-    // Also observe style/class changes that might affect padding
-    const mutationObserver = new MutationObserver(() => {
-      markFlexboxAndItemsWrapState(flexBox);
+    // Also observe style/class changes that might affect padding, but only
+    // process if it's likely to be a meaningful change (filtering in the handler)
+    const mutationObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        // Only process if it's a style or class change that might affect layout
+        if (
+          mutation.type === "attributes" &&
+          (mutation.attributeName === "style" ||
+            mutation.attributeName === "class")
+        ) {
+          // Use setTimeout to batch multiple rapid mutations
+          setTimeout(() => {
+            if (!activeUpdates.has(flexBox)) {
+              markFlexboxAndItemsWrapState(flexBox);
+            }
+          }, 0);
+
+          break; // Only need to schedule one update
+        }
+      }
     });
 
     mutationObserver.observe(flexBox, {
